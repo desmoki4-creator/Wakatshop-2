@@ -74,12 +74,13 @@ details.pay input,details.pay select{width:100%;padding:9px;margin:6px 0;border:
 
 <div class="container">
   <div id="shop-view" class="view active">
-    <div class="categories">
-      <button class="cat-btn active" onclick="filterCategory('all',this)">Tous</button>
-      <button class="cat-btn" onclick="filterCategory('Lit',this)">Lits</button>
-      <button class="cat-btn" onclick="filterCategory('Meuble',this)">Meubles</button>
-    </div>
+    <div class="categories" id="categories"></div>
     <div class="products-grid" id="products-grid"><p class="msg">Chargement des articles...</p></div>
+    <div class="section-box" style="margin-top:20px;text-align:center">
+      <h3>Un autre article en tête ?</h3>
+      <p style="font-size:.95rem;color:#555;line-height:1.5;margin-bottom:12px">Téléviseur, matelas, électroménager... Dites-nous ce que vous voulez : nous vous confirmons le prix, puis vous payez petit à petit.</p>
+      <button class="btn" onclick="requestCustom()">Demander un article</button>
+    </div>
     <div class="section-box" style="margin-top:30px;background:#fdf8f5;border-left:4px solid var(--primary)">
       <h3>À propos de WakatShop</h3>
       <p style="font-size:.95rem;color:#555;line-height:1.5">Bienvenue chez <strong>WakatShop</strong>. Nous sommes spécialisés dans la vente de meubles faits main et de lits personnalisés en bois rouge robustes, capitonnés en faux cuir, avec coffres de rangement et tiroirs intégrés. Profitez de notre système d'achat flexible et d'épargne par versements adaptés à votre rythme !</p>
@@ -118,7 +119,7 @@ details.pay input,details.pay select{width:100%;padding:9px;margin:6px 0;border:
         <h3 id="form-title">Ajouter un nouveau produit</h3>
         <input type="hidden" id="prod-id">
         <div class="form-group"><label>Titre de l'article</label><input type="text" id="prod-title" placeholder="Ex: Lit double en bois rouge avec coffre"></div>
-        <div class="form-group"><label>Catégorie</label><select id="prod-cat"><option value="Lit">Lit</option><option value="Meuble">Meuble</option></select></div>
+        <div class="form-group"><label>Catégorie</label><input type="text" id="prod-cat" list="cat-list" placeholder="Ex: Lits, Meubles, Matelas, Électroménager..."><datalist id="cat-list"></datalist></div>
         <div class="form-group"><label>Prix (FCFA)</label><input type="number" id="prod-price" placeholder="Ex: 150000"></div>
         <div class="form-group"><label>Lien de l'image (ImgBB)</label><input type="text" id="prod-img" placeholder="Collez le lien direct de l'image"></div>
         <div class="form-group"><label>Description détaillée</label><textarea id="prod-desc" rows="4" placeholder="Matériaux, dimensions, rangements intégrés..."></textarea></div>
@@ -208,6 +209,7 @@ function loadProducts() {
     .then(refreshProducts, () => {});
 }
 function refreshProducts() {
+  renderCategories();
   renderProducts();
   renderAdminProducts();
   updateStats();
@@ -272,11 +274,21 @@ function productCard(p, admin) {
     </div></div>`;
 }
 
+const catOf = p => {
+  if (/^\s*lit/i.test(p.title) || /^lit/i.test(p.category)) return 'Lits';
+  const k = String(p.category || 'Autres').trim().toLowerCase().replace(/s$/, '');
+  return k ? k.charAt(0).toUpperCase() + k.slice(1) + 's' : 'Autres';
+};
+function renderCategories() {
+  const cats = [...new Set(products.map(catOf))].sort();
+  if (currentFilter !== 'all' && !cats.includes(currentFilter)) currentFilter = 'all';
+  document.getElementById('categories').innerHTML = ['all', ...cats].map(c =>
+    `<button class="cat-btn${c === currentFilter ? ' active' : ''}" data-cat="${esc(c)}" onclick="filterCategory(this.dataset.cat,this)">${c === 'all' ? 'Tous' : esc(c)}</button>`).join('');
+  document.getElementById('cat-list').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
+}
 function renderProducts() {
   const grid = document.getElementById('products-grid');
-  const isLit = p => /^\s*lit/i.test(p.title) || /^lit/i.test(p.category);
-  const list = currentFilter === 'all' ? products
-    : products.filter(p => currentFilter === 'Lit' ? isLit(p) : !isLit(p));
+  const list = currentFilter === 'all' ? products : products.filter(p => catOf(p) === currentFilter);
   grid.innerHTML = list.length ? list.map(p => productCard(p, false)).join('')
     : '<p class="msg">Aucun article disponible pour le moment.</p>';
 }
@@ -321,12 +333,27 @@ function orderProduct(id) {
     .catch(() => alert("Échec de l'envoi. Vérifiez votre connexion et réessayez."));
 }
 
+function requestCustom() {
+  const item = (prompt("Quel article souhaitez-vous acheter ? (ex : téléviseur 43 pouces, matelas 2 places)") || '').trim();
+  if (!item) return;
+  const note = (prompt("Votre budget approximatif ou une précision (facultatif) :") || '').trim();
+  const rawPhone = prompt("Entrez votre numéro de téléphone Mobile Money :");
+  if (!rawPhone) return;
+  const phone = digits(rawPhone);
+  if (phone.length < 8) { alert("Numéro invalide. Vérifiez et réessayez."); return; }
+  const name = (prompt("Entrez votre nom et prénom :") || '').trim();
+  if (!name) return;
+  post({ action: 'saveDeposit', deposit: { name: name, phone: phone, item: item, note: note } })
+    .then(() => alert("Demande envoyée ! WakatShop vous confirmera le prix. Suivez-la dans l'onglet « Mon compte »."))
+    .catch(() => alert("Échec de l'envoi. Vérifiez votre connexion et réessayez."));
+}
+
 /* ---------- ADMIN : PRODUITS ---------- */
 function saveProduct() {
   const product = {
     id: document.getElementById('prod-id').value || 'PRD_' + Date.now(),
     title: document.getElementById('prod-title').value.trim(),
-    category: document.getElementById('prod-cat').value,
+    category: document.getElementById('prod-cat').value.trim() || 'Autres',
     price: document.getElementById('prod-price').value,
     description: document.getElementById('prod-desc').value,
     img: document.getElementById('prod-img').value.trim()
@@ -342,7 +369,7 @@ function editProduct(id) {
   if (!p) return;
   document.getElementById('prod-id').value = p.id;
   document.getElementById('prod-title').value = p.title;
-  document.getElementById('prod-cat').value = p.category || 'Lit';
+  document.getElementById('prod-cat').value = p.category || '';
   document.getElementById('prod-price').value = p.price;
   document.getElementById('prod-desc').value = p.description || '';
   document.getElementById('prod-img').value = p.img || '';
@@ -351,7 +378,7 @@ function editProduct(id) {
 }
 function clearProductForm() {
   ['prod-id','prod-title','prod-price','prod-desc','prod-img'].forEach(i => document.getElementById(i).value = '');
-  document.getElementById('prod-cat').value = 'Lit';
+  document.getElementById('prod-cat').value = '';
   document.getElementById('form-title').innerText = "Ajouter un nouveau produit";
 }
 function deleteProduct(id) {
@@ -382,7 +409,9 @@ function renderAdminDeposits() {
   html += `<h4 style="color:var(--primary);margin:15px 0 8px">Dossiers clients</h4>`;
   html += deposits.length ? deposits.slice().reverse().map(d => `<div class="dep">
       <strong>${esc(d.name)}</strong> (${esc(d.phone)})<br>${esc(d.ref)}<br>
+      ${d.note ? `<small>Précision du client : ${esc(d.note)}</small><br>` : ''}
       ${money(d.amount)} / ${money(d.price)} FCFA · <b>${esc(d.status)}</b>${bar(d.amount, d.price)}
+      ${Number(d.price) > 0 ? '' : `<input type="number" id="price-${esc(d.id)}" min="1" placeholder="Fixer le prix (FCFA)"><button class="btn" onclick="setPrice('${esc(d.id)}')">Fixer le prix</button><br>`}
       <input type="number" id="cash-${esc(d.id)}" min="0" placeholder="Versement en espèces">
       <button class="btn" onclick="addCash('${esc(d.id)}')">Ajouter</button></div>`).join('')
     : '<p>Aucun dossier pour le moment.</p>';
@@ -401,13 +430,20 @@ function addCash(depId) {
     .then(() => { alert("Versement ajouté."); return loadDeposits(); })
     .catch(() => alert("Échec de l'ajout."));
 }
+function setPrice(depId) {
+  const price = Number(document.getElementById('price-' + depId).value);
+  if (!(price > 0)) { alert("Entrez un prix valide."); return; }
+  post({ action: 'setDepositPrice', depositId: depId, price: price })
+    .then(() => { alert("Prix fixé. Le client peut maintenant faire ses versements."); return loadDeposits(); })
+    .catch(() => alert("Échec de l'opération."));
+}
 function switchAdminTab(tab) {
   document.getElementById('admin-products-sec').style.display = tab === 'products' ? 'block' : 'none';
   document.getElementById('admin-deposits-sec').style.display = tab === 'products' ? 'none' : 'block';
 }
 
 /* ---------- COMPTE CLIENT ---------- */
-const STATUS_COLOR = { 'Soldé': '#28a745', 'Validé': '#28a745', 'En cours': '#e0a800', 'En attente': '#e0a800', 'Refusé': '#c0392b' };
+const STATUS_COLOR = { 'Soldé': '#28a745', 'Validé': '#28a745', 'En cours': '#e0a800', 'En attente': '#e0a800', 'À confirmer': '#999', 'Refusé': '#c0392b' };
 
 function checkSavings() {
   const phone = digits(document.getElementById('client-phone').value);
@@ -435,12 +471,12 @@ function checkSavings() {
       html += `<div style="background:#fdf8f5;padding:12px;border-radius:5px;margin-bottom:12px;border-left:4px solid ${c}">
         <strong>${esc(d.ref)}</strong><br>
         ${price ? `Prix : <b>${money(price)} FCFA</b> · Versé : <b>${money(paid)} FCFA</b> · Reste : <b>${money(Math.max(price - paid, 0))} FCFA</b>${bar(paid, price)}<small>${pct(paid, price)} % payé</small><br>`
-               : `Versé : <b>${money(paid)} FCFA</b><br>`}
+               : `<i>Prix en cours de confirmation par WakatShop${d.note ? ' (' + esc(d.note) + ')' : ''}.</i><br>`}
         Statut : <span class="badge" style="color:${c};border-color:${c}">${esc(d.status)}</span>
         <div class="hist">${mine.length ? mine.map(x => `<div>${dateFmt(x.date)} · ${money(x.amount)} FCFA (${esc(x.method)}) ·
           <span style="color:${STATUS_COLOR[x.status] || '#999'};font-weight:bold">${esc(x.status)}</span></div>`).join('')
           : '<div>Aucun versement pour le moment.</div>'}</div>`;
-      if (d.status !== 'Soldé') {
+      if (d.status !== 'Soldé' && price > 0) {
         html += `<details class="pay"><summary>Faire un versement</summary>
           <div class="payinfo">1) Envoyez le montant par Mobile Money :<br><b>${esc(PAY_INFO)}</b><br>2) Notez la référence reçue par SMS, puis remplissez ci-dessous.</div>
           <input type="number" id="pa-${id}" min="1" placeholder="Montant versé (FCFA)">
@@ -468,4 +504,4 @@ function submitPayment(id) {
 }
 </script>
 </body>
-</html>
+  </html>
