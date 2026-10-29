@@ -74,6 +74,11 @@ details.pay input,details.pay select{width:100%;padding:9px;margin:6px 0;border:
 
 <div class="container">
   <div id="shop-view" class="view active">
+    <div class="section-box" style="text-align:center">
+      <h3>Inscription gratuite, sans achat</h3>
+      <p style="font-size:.95rem;color:#555;line-height:1.5;margin-bottom:12px">Pas besoin d'acheter pour vous inscrire. Créez votre compte avec votre numéro, vous choisirez un article quand vous voudrez.</p>
+      <button class="btn" onclick="registerClient()">Créer mon compte gratuitement</button>
+    </div>
     <div class="categories" id="categories"></div>
     <div class="products-grid" id="products-grid"><p class="msg">Chargement des articles...</p></div>
     <div class="section-box" style="margin-top:20px;text-align:center">
@@ -96,6 +101,7 @@ details.pay input,details.pay select{width:100%;padding:9px;margin:6px 0;border:
         <input type="tel" id="client-phone" placeholder="Ex: 67443949">
       </div>
       <button class="btn" onclick="checkSavings()">Accéder à mon compte</button>
+      <button class="btn btn-outline" onclick="registerClient()">Pas encore de compte ? Créer mon compte</button>
     </div>
     <div id="client-savings-result"></div>
   </div>
@@ -167,9 +173,10 @@ const PLACEHOLDER = 'https://i.ibb.co/5G783YQ/placeholder.png';
 
 let products = [];
 // >>> Remplacez par VOS numéros Mobile Money <<<
-const PAY_INFO = "Orange Money : 67 44 39 49 |  Moov Money : 73 35 12 07";
+const PAY_INFO = "Orange Money : 67 44 3 49 |  Moov Money : 73 35 12 07";
 let payments = [];
 let deposits = [];      // réservé à l'admin
+let registered = [];    // clients inscrits sans produit (admin)
 let adminPwd = '';
 let currentFilter = 'all';
 
@@ -218,17 +225,18 @@ function refreshProducts() {
 function loadDeposits() {
   return Promise.all([
     api({ action: 'getDeposits', pwd: adminPwd }),
-    api({ action: 'getPayments', pwd: adminPwd })
-  ]).then(([d, p]) => {
+    api({ action: 'getPayments', pwd: adminPwd }),
+    api({ action: 'getClients', pwd: adminPwd })
+  ]).then(([d, p, c]) => {
     if (!Array.isArray(d) || !Array.isArray(p)) throw new Error('unauthorized');
-    deposits = d; payments = p;
+    deposits = d; payments = p; registered = Array.isArray(c) ? c : [];
     renderAdminDeposits();
     updateStats();
   });
 }
 
 function updateStats() {
-  const clients = new Set(deposits.map(d => digits(d.phone)).filter(Boolean));
+  const clients = new Set(deposits.concat(registered).map(d => digits(d.phone)).filter(Boolean));
   document.getElementById('stat-clients').innerText = adminPwd ? clients.size : '—';
   document.getElementById('stat-products').innerText = products.length;
 }
@@ -253,7 +261,7 @@ function showView(viewId, btn) {
   btn.classList.add('active');
 }
 function adminLogout() {
-  adminPwd = ''; deposits = [];
+  adminPwd = ''; deposits = []; registered = [];
   updateStats();
   showView('shop-view', document.querySelector('.nav-item'));
 }
@@ -331,6 +339,22 @@ function orderProduct(id) {
   post({ action: 'saveDeposit', deposit: { name: name, phone: phone, productId: p.id } })
     .then(() => alert("Demande enregistrée ! Consultez l'onglet « Mon compte » avec votre numéro."))
     .catch(() => alert("Échec de l'envoi. Vérifiez votre connexion et réessayez."));
+}
+
+/* ---------- INSCRIPTION SANS PRODUIT ---------- */
+function registerClient() {
+  const name = (prompt("Entrez votre nom et prénom :") || '').trim();
+  if (!name) return;
+  const phone = digits(prompt("Entrez votre numéro de téléphone Mobile Money :"));
+  if (phone.length < 8) { alert("Numéro invalide. Vérifiez et réessayez."); return; }
+  post({ action: 'registerClient', client: { name: name, phone: phone } })
+    .then(() => {
+      alert("Compte créé ! Vous pourrez choisir un article quand vous voulez.");
+      document.getElementById('client-phone').value = phone;
+      showView('savings-view', document.querySelectorAll('.nav-item')[1]);
+      checkSavings();
+    })
+    .catch(() => alert("Échec de l'inscription. Vérifiez votre connexion et réessayez."));
 }
 
 function requestCustom() {
@@ -415,6 +439,10 @@ function renderAdminDeposits() {
       <input type="number" id="cash-${esc(d.id)}" min="0" placeholder="Versement en espèces">
       <button class="btn" onclick="addCash('${esc(d.id)}')">Ajouter</button></div>`).join('')
     : '<p>Aucun dossier pour le moment.</p>';
+  html += `<h4 style="color:var(--primary);margin:15px 0 8px">Inscrits sans article (${registered.length})</h4>`;
+  html += registered.length ? registered.slice().reverse().map(c => `<div class="dep">
+      <strong>${esc(c.name)}</strong> (${esc(c.phone)}) · ${dateFmt(c.date)}</div>`).join('')
+    : '<p>Aucune inscription pour le moment.</p>';
   list.innerHTML = html;
 }
 function reviewPayment(id, decision) {
@@ -453,11 +481,16 @@ function checkSavings() {
 
   Promise.all([
     api({ action: 'getClientDeposits', phone: phone }),
-    api({ action: 'getClientPayments', phone: phone })
-  ]).then(([deps, pays]) => {
+    api({ action: 'getClientPayments', phone: phone }),
+    api({ action: 'getClient', phone: phone })
+  ]).then(([deps, pays, cli]) => {
     if (!Array.isArray(deps) || !Array.isArray(pays)) throw new Error('format');
     if (!deps.length) {
-      box.innerHTML = '<div class="section-box" style="margin-top:15px;color:#c0392b">Aucun compte trouvé pour ce numéro. Commandez un article pour créer votre compte d\'épargne.</div>';
+      if (Array.isArray(cli) && cli.length) {
+        box.innerHTML = `<div class="section-box" style="margin-top:15px"><h3>Bienvenue ${esc(cli[0].name)} 👋</h3><p style="color:#555;line-height:1.5;margin-bottom:12px">Votre compte est créé. Choisissez un article quand vous voulez et payez petit à petit.</p><button class="btn" onclick="showView('shop-view', document.querySelector('.nav-item'))">Voir les articles</button></div>`;
+        return;
+      }
+      box.innerHTML = '<div class="section-box" style="margin-top:15px;color:#c0392b">Aucun compte trouvé pour ce numéro. Créez votre compte gratuitement ou commandez un article.</div>';
       return;
     }
     let html = `<div class="section-box" style="margin-top:15px">
